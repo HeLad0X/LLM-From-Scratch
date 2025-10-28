@@ -1,5 +1,5 @@
 import re
-from config import normalize_text
+from utility import normalize_text
 
 class SimpleTokenizerV1:
     def __init__(self, vocab):

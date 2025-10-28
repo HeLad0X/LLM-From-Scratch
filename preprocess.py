@@ -1,5 +1,5 @@
 import re
-from config import DATA_PATH, normalize_text
+from utility import DATA_PATH, normalize_text
 from tokenizer import SimpleTokenizerV5
 
 def create_vocab():
