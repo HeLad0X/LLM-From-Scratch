@@ -38,8 +38,8 @@ def get_dataset_iter():
     corpus_factory = get_corpus_iter(DATA_PATH)
 
     try:
-        print('Tokenizer found. Loading tokenizer....')
         tokenizer = BPETokenizer.load(CACHE_PATH)
+        print('Tokenizer found. Loading tokenizer....')
     except Exception:
         print('No tokenizer found. Training tokenizer....')
         tokenizer = BPETokenizer()
@@ -55,3 +55,4 @@ def get_dataset_iter():
 
 data_loader_iter = iter(get_dataset_iter())
 next_batch = next(data_loader_iter)
+print(next_batch)
