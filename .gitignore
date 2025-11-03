@@ -79,3 +79,4 @@ gpu_check.py
 # Unnecessary folder
 Habitica/
 delete_identifier.py
+cache_data/
