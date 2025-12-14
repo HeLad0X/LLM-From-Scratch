@@ -1,21 +1,23 @@
+import torch
 from torch import nn
 
-class AttentionHead:
-    def __init__(self, batch_size = 16, n = 32, d_model = 64, dk = 32, dv = 32) -> None:
-        self.__batch_size = batch_size
-        self.__n = n
-        self.__d_model = d_model
+class SelfAttention_v1(nn.Module):
+    def __init__(self, d_in, d_out, device = torch.device("cuda"), qkv_bias = False):
+        super().__init__()
+        self.W_query = nn.Linear(d_in, d_out, bias = qkv_bias).to(device)
+        self.W_key = nn.Linear(d_in, d_out, bias = qkv_bias).to(device)
+        self.W_value = nn.Linear(d_in, d_out, bias = qkv_bias).to(device)
 
-        self.__Wq = nn.Embedding(self.__d_model, dk)
-        self.__Wk = nn.Embedding(self.__d_model, dk)
-        self.__Wv = nn.Embedding(self.__d_model, dv)
+    def forward(self, x):
+        keys = x @ self.W_key
+        queries = x @ self.W_query
+        values = x @ self.W_value
 
-    def return_matrix(self):
-        return [self.__Wk, self.__Wq, self.__Wv]
+        attn_score = queries @ keys.T
+        attn_weights = torch.softmax(
+            attn_score / (keys.shape[-1] ** 0.5), dim = -1
+        )
 
+        context_vector = attn_weights @ values
 
-test = AttentionHead()
-val = test.return_matrix()
-
-for v in val:
-    print(v)
+        return context_vector

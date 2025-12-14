@@ -78,5 +78,7 @@ gpu_check.py
 *.Identifier
 
 # Unnecessary folder
-Habitica/
 delete_identifier.py
+cache_data/
+merges.txt
+vocab.json
