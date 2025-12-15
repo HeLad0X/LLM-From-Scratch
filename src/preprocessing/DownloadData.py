@@ -1,6 +1,5 @@
-import os, json, time, re
+import json, time, re
 from pathlib import Path
-from urllib.parse import urlparse
 import requests
 
 API_BASE = "https://gutendex.com/books"

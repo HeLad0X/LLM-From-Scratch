@@ -1,8 +1,15 @@
 import torch
 import torch.nn as nn
 
+import os, sys
+
+sys.path.append(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
+
+from src.GPTConfig import GPTConfig
+
 class InputEmbedding(nn.Module):
-    def __init__(self, tokenizer, d_model: int = 64, max_context_length: int = 128, dropout: float = 0.1):
+    def __init__(self, tokenizer, d_model: int = GPTConfig.emb_dim, max_context_length: int = GPTConfig.max_context_length, dropout: float = 0.1):
         super().__init__()
         self.vocab_size = len(tokenizer)
         self.d_model = d_model
