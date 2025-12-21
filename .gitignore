@@ -9,6 +9,7 @@ venv/
 ENV/
 .venv/
 .llm_env/
+.data_env/
 
 # Jupyter notebook checkpoints
 .ipynb_checkpoints/
@@ -82,3 +83,5 @@ tempCodeRunnerFile.py
 Habitica/
 delete_identifier.py
 cache_data/
+logs/
+bpe_token_data/

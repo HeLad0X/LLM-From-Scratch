@@ -1,32 +1,24 @@
 import torch
 import torch.nn as nn
 
-import os, sys
-
-sys.path.append(
-    os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
-
-from src.GPTConfig import GPTConfig
-
 class InputEmbedding(nn.Module):
-    def __init__(self, tokenizer, d_model: int = GPTConfig.emb_dim, max_context_length: int = GPTConfig.max_context_length, dropout: float = 0.1):
+    def __init__(self, tokenizer, d_model, max_context_length, dropout):
         super().__init__()
-        self.vocab_size = len(tokenizer)
-        self.d_model = d_model
-        self.max_context_length = max_context_length
+        vocab_size = len(tokenizer)
+        pad_id = getattr(tokenizer, "stoi", {}).get("<PAD>", None)
 
-        pad_id = tokenizer.stoi.get("<PAD>", None)
-        self.tok_emb = nn.Embedding(self.vocab_size, d_model, padding_idx=pad_id)
+        self.tok_emb = nn.Embedding(vocab_size, d_model, padding_idx=pad_id)
         self.pos_emb = nn.Embedding(max_context_length, d_model)
-        self.dropout = nn.Dropout(dropout)
+        self.drop = nn.Dropout(dropout)
+
+        self.max_context_length = max_context_length
+        self.register_buffer("pos_ids", torch.arange(max_context_length, dtype=torch.long), persistent=False)
 
     def forward(self, x):
-        """
-        x: Tensor of shape [B, T] with token IDs
-        returns: Tensor [B, T, d_model]
-        """
         B, T = x.shape
-        tok = self.tok_emb(x) * (self.d_model ** 0.5)
-        pos_ids = torch.arange(T, device=x.device)
-        pos = self.pos_emb(pos_ids)[None, :, :]  # shape [1, T, d_model]
-        return self.dropout(tok + pos)
+        if T > self.max_context_length:
+            raise ValueError(f"T={T} exceeds max_context_length={self.max_context_length}")
+
+        tok = self.tok_emb(x)                          # [B, T, d]
+        pos = self.pos_emb(self.pos_ids[:T])[None, :, :]  # [1, T, d]
+        return self.drop(tok + pos)

@@ -1,18 +1,21 @@
+import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, d_in, d_out, context_length, dropout, num_heads, qkv_bias=False):
+    def __init__(self, d_model, context_length, dropout, num_heads, qkv_bias=False, use_sdpa=True):
         super().__init__()
-        assert d_out % num_heads == 0, "d_out must be divisible by num_heads"
+        assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
 
-        self.d_out = d_out
+        self.d_model = d_model
         self.num_heads = num_heads
-        self.head_dim = d_out // num_heads
-        self.scale = self.head_dim ** 0.5
+        self.head_dim = d_model // num_heads
+        self.scale = 1.0 / math.sqrt(self.head_dim)
+        self.use_sdpa = use_sdpa
 
-        self.W_qkv = nn.Linear(d_in, 3 * d_out, bias=qkv_bias)
-        self.out_proj = nn.Linear(d_out, d_out, bias=True)
+        self.W_qkv = nn.Linear(d_model, 3 * d_model, bias=qkv_bias)
+        self.out_proj = nn.Linear(d_model, d_model, bias=True)
 
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
@@ -21,27 +24,31 @@ class MultiHeadAttention(nn.Module):
         self.register_buffer("mask", mask, persistent=False)
 
     def forward(self, x):
-        B, T, _ = x.shape
+        B, T, C = x.shape
+        if T > self.mask.size(0):
+            raise ValueError(f"T={T} exceeds context_length={self.mask.size(0)}")
 
-        qkv = self.W_qkv(x)                       # (B, T, 3*d_out)
-        q, k, v = qkv.chunk(3, dim=-1)            # each (B, T, d_out)
+        qkv = self.W_qkv(x)
+        q, k, v = qkv.chunk(3, dim=-1)
 
-        q = q.reshape(B, T, self.num_heads, self.head_dim).transpose(1, 2)  # (B, h, T, hd)
-        k = k.reshape(B, T, self.num_heads, self.head_dim).transpose(1, 2)
-        v = v.reshape(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        q = q.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        k = k.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        v = v.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
 
-        attn_scores = q @ k.transpose(-2, -1)     # (B, h, T, T)
-        attn_scores = attn_scores / self.scale
+        if self.use_sdpa and hasattr(F, "scaled_dot_product_attention"):
+            out = F.scaled_dot_product_attention(
+                q, k, v,
+                is_causal=True,
+                dropout_p=self.attn_dropout.p if self.training else 0.0
+            )
+        else:
+            att = (q @ k.transpose(-2, -1)) * self.scale
+            mask = self.mask[:T, :T]
+            mask_value = -1e4 if att.dtype in (torch.float16, torch.bfloat16) else -1e9
+            att = att.masked_fill(mask, mask_value)
+            att = self.attn_dropout(torch.softmax(att, dim=-1))
+            out = att @ v
 
-        mask = self.mask[:T, :T]                  # (T, T) bool
-        attn_scores = attn_scores.masked_fill(mask, torch.finfo(attn_scores.dtype).min)
-
-        attn_weights = torch.softmax(attn_scores, dim=-1)
-        attn_weights = self.attn_dropout(attn_weights)
-
-        out = attn_weights @ v                    # (B, h, T, hd)
-        out = out.transpose(1, 2).contiguous().reshape(B, T, self.d_out)  # (B, T, d_out)
-
-        out = self.out_proj(out)
-        out = self.resid_dropout(out)
+        out = out.transpose(1, 2).contiguous().view(B, T, C)
+        out = self.resid_dropout(self.out_proj(out))
         return out

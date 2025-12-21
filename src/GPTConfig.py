@@ -40,7 +40,7 @@ class GPTConfig:
     specials = getattr(tokenizer, "specials", None)
     min_word_freq = getattr(tokenizer, "min_word_freq", None)
     max_merges = getattr(tokenizer, "max_merges", None)
-    cache_dir = getattr(tokenizer, "cache_dir", None)
+    token_cache_dir = getattr(tokenizer, "token_cache_dir", None)
 
     # =========================
     # Data configuration
@@ -54,6 +54,7 @@ class GPTConfig:
     num_workers = getattr(data, "num_workers", None)
     pin_memory = getattr(data, "pin_memory", None)
     shuffle = getattr(data, "shuffle", None)
+    log_dir = getattr(data, "log_dir", None)
 
     # =========================
     # Training configuration
@@ -92,6 +93,8 @@ class GPTConfig:
     norm_eps = getattr(model, "norm_eps", None)
     tie_weights = getattr(model, "tie_weights", None)
     mlp_ratio = getattr(model, "mlp_ratio", None)
+    cache_size = getattr(model, "cache_size", None)
+    model_cache = getattr(model, "model_cache", None)
 
     # =========================
     # Runtime / system configuration
