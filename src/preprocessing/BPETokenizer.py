@@ -14,17 +14,37 @@ from GPTConfig import GPTConfig
 
 EOW = "</w>"  # End-of-word marker used by this simple BPE
 
-_WORD_RE = re.compile(r"\w+(?:'\w+)*|[^\w\s]", flags=re.UNICODE)
+_WORD_RE = re.compile(
+    r"(?:\w+(?:'\w+)*)"      # words with apostrophe contractions (don't, I've)
+    r"|--"                   # double dash
+    r"|-"                    # hyphen-minus (after normalization, covers many dashes)
+    r'|"'                    # double quote
+    r"|[^\w\s]",             # any other single non-word non-space char
+    flags=re.UNICODE
+)
 
 
 def normalize_text(s: str) -> str:
     s = unicodedata.normalize("NFKC", s)
 
-    # Normalize curly quotes/apostrophes to ASCII apostrophe
+    # Normalize curly quotes/apostrophes to ASCII
     s = s.translate(str.maketrans({
         "\u2019": "'",  # ’
         "\u2018": "'",  # ‘
-        "\u02BC": "'",  # ʼ (modifier letter apostrophe)
+        "\u02BC": "'",  # ʼ
+
+        "\u201C": '"',  # “
+        "\u201D": '"',  # ”
+        "\u201E": '"',  # „
+        "\u00AB": '"',  # «
+        "\u00BB": '"',  # »
+
+        "\u2010": "-",  # ‐
+        "\u2011": "-",  # -
+        "\u2012": "-",  # ‒
+        "\u2013": "-",  # –
+        "\u2014": "-",  # —
+        "\u2212": "-",  # −
     }))
 
     s = re.sub(r"\s+", " ", s).strip()
@@ -200,6 +220,18 @@ class BPETokenizer:
         self.merges = merges
         self.itos = list(self.specials) + sorted(tokens)
         self.stoi = {t: i for i, t in enumerate(self.itos)}
+
+        # If the corpus has fewer base symbols/merges than target vocab,
+        # pad with synthetic tokens to hit the requested vocab size so config stays consistent.
+        target_vocab = int(vocab_size)
+        deficit = max(0, target_vocab - len(self.itos))
+        if deficit > 0:
+            for i in range(deficit):
+                t = f"<EXTRA_{i}>"
+                self.stoi[t] = len(self.itos)
+                self.itos.append(t)
+            logger.info(f"[BPE] Added {deficit} synthetic tokens to reach vocab_size={target_vocab}")
+
         self._rebuild_merge_rank()
         self._word_cache.clear()
 
@@ -307,12 +339,74 @@ class BPETokenizer:
     def encode_words_iter(self, word_iter):
         """
         Streaming encoder for datasets.
-        Assumes word_iter may already contain <SP> (GetDataset emits it).
+        Accepts either pre-tokenized words/specials or raw text chunks.
+        - If item is a known special token, emit it directly.
+        - If item contains whitespace (likely a document/chunk), run full encode() and append <EOS>.
+        - Otherwise treat it as a single token/word.
         """
-        for tok in word_iter:
-            if not tok:
+        eos = self.stoi.get("<EOS>")
+        specials_set = set(self.specials)
+
+        for item in word_iter:
+            if not item:
                 continue
-            yield from self.encode_word(tok)
+
+            if isinstance(item, str) and item in specials_set:
+                yield from self.encode_word(item)
+                continue
+
+            if isinstance(item, str) and any(ch.isspace() for ch in item):
+                yield from self.encode(item)
+                if eos is not None:
+                    yield eos
+                continue
+
+            # Fallback: treat as pre-split word
+            yield from self.encode_word(str(item))
+
+    def _detokenize_text(self, s: str) -> str:
+        # Normalize whitespace first.
+        s = re.sub(r"[ \t]+", " ", s).strip()
+
+        # Remove spaces before common closing punctuation.
+        s = re.sub(r"\s+([,.;:!?%)\]\}])", r"\1", s)
+
+        # Remove spaces after common opening punctuation.
+        s = re.sub(r"([(\[\{])\s+", r"\1", s)
+
+        # Currency formatting: "$ 10" -> "$10"
+        s = re.sub(r"([$€£¥])\s+(\d)", r"\1\2", s)
+
+        # Decimal and grouped numbers: "1. 99" -> "1.99", "1, 000" -> "1,000"
+        s = re.sub(r"(\d)\s*([.,])\s*(\d)", r"\1\2\3", s)
+
+        # Hyphenated compounds: "two - year - old" or "two- year" -> "two-year-old"
+        # Run twice to catch chains like a - b - c (first pass: a-b - c, second: a-b-c)
+        for _ in range(3):
+            s = re.sub(r"([A-Za-z0-9])\s*-\s*([A-Za-z0-9])", r"\1-\2", s)
+            
+        for _ in range(3):
+            s = re.sub(r"([A-Za-z0-9])\s*-\s*([A-Za-z0-9])", r"\1-\2", s)
+
+        # English contractions / possessives: "don ' t" -> "don't", "it ' s" -> "it's"
+        s = re.sub(r"([A-Za-z])\s+'\s*([A-Za-z])", r"\1'\2", s)
+        s = re.sub(r"([A-Za-z])\s*'\s+([A-Za-z])", r"\1'\2", s)
+
+        # ---- Double-quote spacing ----
+        # Process quotes as pairs: strip whitespace immediately inside "..." 
+        # e.g. ' " hello " ' -> '"hello"', 'said " hi " and' -> 'said "hi" and'
+        s = re.sub(r'"(\s*)(.*?)(\s*)"', lambda m: '"' + m.group(2).strip() + '"', s)
+
+        # ---- Single-quote spacing (quotation marks only, not contractions) ----
+        # Only fix single quotes that are clearly acting as quotation marks.
+        # Opening single quote: preceded by space/start, followed by word (with possible space)
+        s = re.sub(r"(^|\s)'\s*([A-Za-z0-9])", lambda m: m.group(1) + "'" + m.group(2), s)
+        # Closing single quote: word followed by space then quote then space/end
+        s = re.sub(r"([A-Za-z0-9])\s+'(\s|$)", lambda m: m.group(1) + "'" + m.group(2), s)
+
+        # Collapse spaces again after substitutions.
+        s = re.sub(r"[ \t]+", " ", s).strip()
+        return s
 
     def decode(self, ids: List[int]) -> str:
         tokens = [self.itos[i] for i in ids]
@@ -320,33 +414,58 @@ class BPETokenizer:
         cur: List[str] = []
 
         for t in tokens:
-            # Specials
+            # Space token boundary
             if self.space_token is not None and t == self.space_token:
-                # flush current word fragment
                 if cur:
                     out_chunks.append("".join(cur))
                     cur = []
                 out_chunks.append(" ")
                 continue
 
-            # Normal BPE reconstruction
+            # Token is exactly EOW (bare end-of-word marker — rare but possible)
             if t == EOW:
-                out_chunks.append("".join(cur))
-                cur = []
-            elif t.endswith(EOW):
+                if cur:
+                    out_chunks.append("".join(cur))
+                    cur = []
+                else:
+                    # bare </w> with nothing accumulated — emit nothing
+                    pass
+                continue
+
+            # Token ends with EOW — it's a complete word-final subword
+            if t.endswith(EOW):
                 cur.append(t[:-len(EOW)])
                 out_chunks.append("".join(cur))
                 cur = []
-            else:
-                cur.append(t)
+                out_chunks.append(" ")  # word boundary → natural space
+                continue
 
+            # Token contains EOW internally (shouldn't happen in well-formed BPE,
+            # but guard against it anyway)
+            if EOW in t:
+                parts = t.split(EOW)
+                cur.append(parts[0])
+                out_chunks.append("".join(cur))
+                cur = []
+                out_chunks.append(" ")
+                # anything after EOW is a new fragment
+                if parts[1]:
+                    cur.append(parts[1])
+                continue
+
+            # Plain subword fragment — accumulate
+            cur.append(t)
+
+        # Flush any remaining fragment (incomplete word at end of sequence)
         if cur:
             out_chunks.append("".join(cur))
 
-        # Join and collapse accidental multi-spaces
-        s = "".join(out_chunks)
-        s = re.sub(r"[ \t]+", " ", s).strip()
-        return s
+        # Join all chunks — at this point words are space-separated naturally
+        # because we emitted " " after every EOW token.
+        s = "".join(out_chunks).strip()
+
+        # Apply post-processing to fix punctuation spacing artifacts.
+        return self._detokenize_text(s)
 
     def decode_tensor(self, ids_tensor) -> str:
         if hasattr(ids_tensor, "detach"):

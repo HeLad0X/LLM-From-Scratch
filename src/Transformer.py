@@ -8,19 +8,20 @@ class TransformerBlock(nn.Module):
     def __init__(self, cfg: GPTConfig):
         super().__init__()
 
-        self.norm1 = LayerNorm(cfg.emb_dim)
+        self.norm1 = LayerNorm(cfg.emb_dim, eps=float(getattr(cfg, "norm_eps", 1e-5)))
         self.att = MultiHeadAttention(
             d_model=cfg.emb_dim,
             context_length=cfg.max_context_length,
             dropout=cfg.dropout,
             num_heads=cfg.n_heads,
-            use_sdpa=False
+            qkv_bias=bool(getattr(cfg, "bias", False)),
+            out_bias=bool(getattr(cfg, "bias", False)),
+            use_sdpa=bool(getattr(getattr(cfg, "model", None), "use_sdpa", True))
         )
 
-        self.norm2 = LayerNorm(cfg.emb_dim)
+        self.norm2 = LayerNorm(cfg.emb_dim, eps=float(getattr(cfg, "norm_eps", 1e-5)))
         self.ff = FeedForward(cfg)
 
-        # keep this if you want extra residual dropout; otherwise remove
         self.drop_shortcut = nn.Dropout(cfg.dropout)
 
     def forward(self, x):

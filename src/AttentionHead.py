@@ -4,7 +4,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, d_model, context_length, dropout, num_heads, qkv_bias=False, use_sdpa=True):
+    def __init__(
+        self,
+        d_model,
+        context_length,
+        dropout,
+        num_heads,
+        qkv_bias=False,
+        out_bias=False,
+        use_sdpa=True,
+    ):
         super().__init__()
         assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
 
@@ -15,7 +24,7 @@ class MultiHeadAttention(nn.Module):
         self.use_sdpa = use_sdpa
 
         self.W_qkv = nn.Linear(d_model, 3 * d_model, bias=qkv_bias)
-        self.out_proj = nn.Linear(d_model, d_model, bias=True)
+        self.out_proj = nn.Linear(d_model, d_model, bias=out_bias)
 
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
